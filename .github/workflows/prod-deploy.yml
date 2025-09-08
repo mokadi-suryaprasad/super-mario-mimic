@@ -1,0 +1,92 @@
+name: Production Deployment
+
+on:
+  push:
+    branches:
+      - release/*   # triggers when a release branch is pushed/merged
+
+jobs:
+  deploy-prod:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout repo
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # Step 3: Install deps & build
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build app
+        run: npm run build
+
+      # Step 4: Setup gcloud
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      # Step 5: Upload artifacts to GCS
+      - name: Upload build artifacts to GCS
+        run: |
+          gsutil -m cp -r build/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
+
+      # Step 6: Build Docker Image
+      - name: Build Docker image
+        run: |
+          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:prod-${{ github.sha }}
+          docker build -t $IMAGE .
+
+      # Step 7: Trivy Scan
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:prod-${{ github.sha }}
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+
+      # Step 8: Push Docker image
+      - name: Push Docker image to GCR
+        run: |
+          gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
+          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:prod-${{ github.sha }}
+
+      # Step 9: Run OWASP ZAP scan
+      - name: Run OWASP ZAP scan
+        uses: zaproxy/action-full-scan@v0.9.0
+        with:
+          target: 'http://your-production-app-url'   # replace with actual production URL
+          rules_file_name: ''
+          cmd_options: '-r zap_report.html'
+
+      # Step 10: Upload OWASP ZAP report to GCS
+      - name: Upload OWASP ZAP report to GCS
+        run: |
+          gsutil cp zap_report.html gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/zap_reports/zap_report-prod-${{ github.sha }}.html
+
+      # Step 11: Update Helm values-prod.yaml
+      - name: Update Helm values-prod.yaml
+        run: |
+          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
+          cd helm-nodejs-app
+          sed -i "s#tag:.*#tag: prod-${{ github.sha }}#g" values-prod.yaml
+
+      # Step 12: Commit & Push Helm changes
+      - name: Commit & Push changes
+        run: |
+          cd helm-nodejs-app
+          git config user.name "M Surya Prasad"
+          git config user.email "mspr9773@gmail.com"
+          git add values-prod.yaml
+          git commit -m "Update prod image tag to prod-${{ github.sha }}" || echo "No changes to commit"
+          git push origin main

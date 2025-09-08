@@ -1,0 +1,79 @@
+name: Development Deployment
+
+on:
+  push:
+    branches:
+      - main   # runs only after PR is merged into main
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout repo
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # Step 3: Install deps & build
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build app
+        run: npm run build
+
+      # Step 4: Setup gcloud
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      # Step 5: Upload artifacts to GCS
+      - name: Upload build artifacts to GCS
+        run: |
+          gsutil -m cp -r build/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
+
+      # Step 6: Build Docker Image
+      - name: Build Docker image
+        run: |
+          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          docker build -t $IMAGE .
+
+      # Step 7: Trivy Scan
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+
+      # Step 8: Push to GCR
+      - name: Push Docker image
+        run: |
+          gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
+          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+
+      # Step 9: Update Helm values-dev.yaml in external repo
+      - name: Update Helm values-dev.yaml
+        run: |
+          git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
+          cd helm-nodejs-app
+          sed -i "s#tag:.*#tag: dev-${{ github.sha }}#g" values-dev.yaml
+
+      # Step 10: Commit & Push changes
+      - name: Commit & Push changes
+        run: |
+          cd helm-nodejs-app
+          git config user.name "M Surya Prasad"
+          git config user.email "mspr9773@gmail.com"
+          git add values-dev.yaml
+          git commit -m "Update dev image tag to dev-${{ github.sha }}" || echo "No changes to commit"
+          git push origin main
