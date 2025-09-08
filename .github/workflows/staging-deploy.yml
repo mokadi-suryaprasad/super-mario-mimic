@@ -71,17 +71,17 @@ jobs:
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
           docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:preprod-${{ github.sha }}
 
-      # Step 10: Run OWASP ZAP scan (dummy URL)
-      - name: Run OWASP ZAP scan
-        uses: zaproxy/action-full-scan@v0.9.0
-        with:
-          target: 'https://demo.owasp-juice.shop/'  # replace later with real URL
-          cmd_options: '-r zap_report.html'
+      # # Step 10: Run OWASP ZAP scan (dummy URL)
+      # - name: Run OWASP ZAP scan
+      #   uses: zaproxy/action-full-scan@v0.9.0
+      #   with:
+      #     target: 'https://demo.owasp-juice.shop/'  # replace later with real URL
+      #     cmd_options: '-r zap_report.html'
 
-      # Step 11: Upload OWASP ZAP report to GCS
-      - name: Upload OWASP ZAP report
-        run: |
-          gsutil cp zap_report.html gs://${{ secrets.GCS_BUCKET_NAME }}/zap_reports/zap_report-preprod-${{ github.sha }}.html
+      # # Step 11: Upload OWASP ZAP report to GCS
+      # - name: Upload OWASP ZAP report
+      #   run: |
+      #     gsutil cp zap_report.html gs://${{ secrets.GCS_BUCKET_NAME }}/zap_reports/zap_report-preprod-${{ github.sha }}.html
 
       # Step 12: Update Helm values-staging.yaml
       - name: Update Helm values-staging.yaml
