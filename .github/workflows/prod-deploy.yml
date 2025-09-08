@@ -38,16 +38,16 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
-          version: 'latest'   # remove unsupported inputs like export_default_credentials
+          version: 'latest'
 
       # Step 6: Upload build artifacts to GCS
       - name: Upload build artifacts to GCS
         run: |
           BRANCH_NAME=${GITHUB_REF#refs/heads/}
-          # Change folder to 'dist' if using React/Node build output
+          SAFE_BRANCH=${BRANCH_NAME//\//-}   # replace '/' with '-'
           BUILD_DIR="dist"
           if [ -d "$BUILD_DIR" ]; then
-            gsutil -m cp -r $BUILD_DIR/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/$BRANCH_NAME/
+            gsutil -m cp -r $BUILD_DIR/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/$SAFE_BRANCH/
           else
             echo "$BUILD_DIR folder not found!"
             exit 1
@@ -57,14 +57,15 @@ jobs:
       - name: Build Docker image
         run: |
           BRANCH_NAME=${GITHUB_REF#refs/heads/}
-          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$BRANCH_NAME
+          SAFE_TAG=${BRANCH_NAME//\//-}  # replace '/' with '-'
+          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$SAFE_TAG
           docker build -t $IMAGE .
 
       # Step 8: Trivy Scan
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$BRANCH_NAME
+          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$SAFE_TAG
           format: table
           exit-code: '0'
           ignore-unfixed: true
@@ -72,17 +73,19 @@ jobs:
       # Step 9: Push Docker image to GCR
       - name: Push Docker image
         run: |
-          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          SAFE_TAG=${GITHUB_REF#refs/heads/}
+          SAFE_TAG=${SAFE_TAG//\//-}
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
-          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$BRANCH_NAME
+          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$SAFE_TAG
 
       # Step 10: Update Helm values-prod.yaml
       - name: Update Helm values-prod.yaml
         run: |
           BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          SAFE_TAG=${BRANCH_NAME//\//-}
           git clone https://x-access-token:${{ secrets.HELM_REPO_GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
           cd helm-nodejs-app
-          sed -i "s#tag:.*#tag: $BRANCH_NAME#g" values-prod.yaml
+          sed -i "s#tag:.*#tag: $SAFE_TAG#g" values-prod.yaml
           sed -i "s#repository:.*#repository: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app#g" values-prod.yaml
 
       # Step 11: Commit & Push Helm changes
@@ -92,5 +95,5 @@ jobs:
           git config user.name "M Surya Prasad"
           git config user.email "mspr9773@gmail.com"
           git add values-prod.yaml
-          git commit -m "Update prod image tag to $BRANCH_NAME" || echo "No changes to commit"
+          git commit -m "Update prod image tag to $SAFE_TAG" || echo "No changes to commit"
           git push origin main
