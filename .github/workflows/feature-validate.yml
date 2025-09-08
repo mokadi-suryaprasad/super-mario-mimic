@@ -1,5 +1,10 @@
 name: Feature Branch Validation
 
+# Give workflow permission to upload CodeQL results
+permissions:
+  contents: read
+  security-events: write
+
 # Trigger workflow on push to any feature branch or PR to main
 on:
   push:
