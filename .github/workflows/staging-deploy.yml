@@ -1,12 +1,12 @@
-name: Staging Deployment
+name: Pre-Prod Deployment
 
 on:
   push:
     branches:
-      - pre-prod
+      - pre-prod  # triggers when code is pushed/merged to pre-prod
 
 jobs:
-  deploy-staging:
+  deploy-preprod:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,35 +27,24 @@ jobs:
       - name: Build app
         run: npm run build
 
-      # Step 4: Authenticate to GCP
-      - name: Authenticate to GCP
+      # Step 4: Setup gcloud auth
+      - name: Authenticate GCP
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # Step 5: Setup gcloud CLI
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-
-      # Step 6: Upload build artifacts to GCS
+      # Step 5: Upload build artifacts to GCS
       - name: Upload build artifacts to GCS
         run: |
-          if [ -d build ]; then
-            gsutil -m cp -r build/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
-          else
-            echo "Build folder not found!"
-            exit 1
-          fi
+          gsutil -m cp -r dist/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
 
-      # Step 7: Build Docker image
+      # Step 6: Build Docker Image
       - name: Build Docker image
         run: |
           IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:staging-${{ github.sha }}
           docker build -t $IMAGE .
 
-      # Step 8: Trivy Scan
+      # Step 7: Trivy Scan
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
@@ -64,32 +53,32 @@ jobs:
           exit-code: '0'
           ignore-unfixed: true
 
-      # Step 9: Push Docker image
+      # Step 8: Push Docker image
       - name: Push Docker image
         run: |
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
           docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:staging-${{ github.sha }}
 
-      # Step 10: Run OWASP ZAP scan
+      # Step 9: Run OWASP ZAP scan
       - name: Run OWASP ZAP scan
         uses: zaproxy/action-full-scan@v0.9.0
         with:
-          target: 'https://staging.example.com'  # Replace with actual staging URL
+          target: 'http://your-preprod-app-url'  # replace with actual pre-prod URL
           cmd_options: '-r zap_report.html'
 
-      # Step 11: Upload OWASP ZAP report to GCS
-      - name: Upload OWASP ZAP report to GCS
+      # Step 10: Upload OWASP ZAP report to GCS
+      - name: Upload OWASP ZAP report
         run: |
           gsutil cp zap_report.html gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/zap_reports/zap_report-${{ github.sha }}.html
 
-      # Step 12: Update Helm values-staging.yaml
+      # Step 11: Update Helm values for staging
       - name: Update Helm values-staging.yaml
         run: |
           git clone https://x-access-token:${{ secrets.HELM_REPO_GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
           cd helm-nodejs-app
           sed -i "s#tag:.*#tag: staging-${{ github.sha }}#g" values-staging.yaml
 
-      # Step 13: Commit & Push Helm changes
+      # Step 12: Commit & Push Helm changes
       - name: Commit & Push Helm changes
         run: |
           cd helm-nodejs-app
