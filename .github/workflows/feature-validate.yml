@@ -1,5 +1,6 @@
 name: Feature Branch Validation
 
+# Trigger workflow on push to any feature branch or PR to main
 on:
   push:
     branches:
@@ -13,17 +14,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: Checkout code
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Step 2: Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
+      # Step 3: Install dependencies
       - name: Install dependencies
         run: npm install
 
+      # Step 4: Optional Unit Tests
       - name: Run Unit Tests (if exists)
         run: |
           if grep -q "\"test\":" package.json; then
@@ -32,10 +37,18 @@ jobs:
             echo "No test script found, skipping unit tests."
           fi
 
+      # Step 5: Initialize CodeQL
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: javascript
 
+      # Step 6: Perform CodeQL Analysis
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
+
+      # Step 7: Upload SARIF Report to GitHub Security
+      - name: Upload CodeQL SARIF
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: results.sarif
