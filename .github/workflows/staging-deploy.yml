@@ -75,7 +75,7 @@ jobs:
       - name: Run OWASP ZAP scan
         uses: zaproxy/action-full-scan@v0.9.0
         with:
-          target: 'http://dummy-preprod-url'  # replace later with real URL
+          target: 'https://demo.owasp-juice.shop/'  # replace later with real URL
           cmd_options: '-r zap_report.html'
 
       # Step 11: Upload OWASP ZAP report to GCS
