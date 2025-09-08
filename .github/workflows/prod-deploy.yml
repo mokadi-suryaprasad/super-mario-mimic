@@ -1,9 +1,9 @@
-name: Production Deployment
+name: Production Deployment from Release Branch
 
 on:
   push:
     branches:
-      - release/*   # triggers when a release branch is pushed/merged
+      - release/*   # triggers on any release branch
 
 jobs:
   deploy-prod:
@@ -20,60 +20,77 @@ jobs:
         with:
           node-version: '18'
 
-      # Step 3: Install deps & build
+      # Step 3: Install dependencies & build
       - name: Install dependencies
         run: npm install
 
       - name: Build app
         run: npm run build
 
-      # Step 4: Setup gcloud
-      - name: Setup gcloud
+      # Step 4: Authenticate GCP
+      - name: Authenticate GCP
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # Step 5: Setup gcloud CLI
+      - name: Setup gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          export_default_credentials: true
+          version: 'latest'   # remove unsupported inputs like export_default_credentials
 
-      # Step 5: Upload artifacts to GCS
+      # Step 6: Upload build artifacts to GCS
       - name: Upload build artifacts to GCS
         run: |
-          gsutil -m cp -r build/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          # Change folder to 'dist' if using React/Node build output
+          BUILD_DIR="dist"
+          if [ -d "$BUILD_DIR" ]; then
+            gsutil -m cp -r $BUILD_DIR/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/$BRANCH_NAME/
+          else
+            echo "$BUILD_DIR folder not found!"
+            exit 1
+          fi
 
-      # Step 6: Build Docker Image
+      # Step 7: Build Docker Image
       - name: Build Docker image
         run: |
-          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:prod-${{ github.sha }}
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$BRANCH_NAME
           docker build -t $IMAGE .
 
-      # Step 7: Trivy Scan
+      # Step 8: Trivy Scan
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:prod-${{ github.sha }}
-          format: 'table'
+          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$BRANCH_NAME
+          format: table
           exit-code: '0'
           ignore-unfixed: true
 
-      # Step 8: Push Docker image
-      - name: Push Docker image to GCR
+      # Step 9: Push Docker image to GCR
+      - name: Push Docker image
         run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
-          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:prod-${{ github.sha }}
+          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:$BRANCH_NAME
 
-      # Step 9: Update Helm values-prod.yaml
+      # Step 10: Update Helm values-prod.yaml
       - name: Update Helm values-prod.yaml
         run: |
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
           git clone https://x-access-token:${{ secrets.HELM_REPO_GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
           cd helm-nodejs-app
-          sed -i "s#tag:.*#tag: prod-${{ github.sha }}#g" values-prod.yaml
+          sed -i "s#tag:.*#tag: $BRANCH_NAME#g" values-prod.yaml
+          sed -i "s#repository:.*#repository: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app#g" values-prod.yaml
 
-      # Step 10: Commit & Push Helm changes
-      - name: Commit & Push changes
+      # Step 11: Commit & Push Helm changes
+      - name: Commit & Push Helm changes
         run: |
           cd helm-nodejs-app
           git config user.name "M Surya Prasad"
           git config user.email "mspr9773@gmail.com"
           git add values-prod.yaml
-          git commit -m "Update prod image tag to prod-${{ github.sha }}" || echo "No changes to commit"
+          git commit -m "Update prod image tag to $BRANCH_NAME" || echo "No changes to commit"
           git push origin main
