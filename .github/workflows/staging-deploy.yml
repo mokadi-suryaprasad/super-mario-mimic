@@ -36,7 +36,7 @@ jobs:
       # Step 5: Upload build artifacts to GCS
       - name: Upload build artifacts to GCS
         run: |
-          gsutil -m cp -r dist/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
+          gsutil -m cp -r dist/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/pre-pro${{ github.sha }}/
 
       # Step 6: Build Docker Image
       - name: Build Docker image
