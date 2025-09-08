@@ -1,0 +1,41 @@
+name: Feature Branch Validation
+
+on:
+  push:
+    branches:
+      - 'feature/*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Unit Tests (if exists)
+        run: |
+          if grep -q "\"test\":" package.json; then
+            npm test
+          else
+            echo "No test script found, skipping unit tests."
+          fi
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
