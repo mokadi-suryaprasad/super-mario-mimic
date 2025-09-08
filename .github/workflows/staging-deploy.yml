@@ -68,13 +68,13 @@ jobs:
       - name: Run OWASP ZAP scan
         uses: zaproxy/action-full-scan@v0.9.0
         with:
-          target: 'http://your-preprod-app-url'  # Replace with actual Pre-Prod URL
+          target: 'http://dummy-preprod-url.local'  # Dummy URL for ZAP scan
           cmd_options: '-r zap_report.html'
 
       # Step 10: Upload OWASP ZAP report to GCS
       - name: Upload OWASP ZAP report
         run: |
-          gsutil cp zap_report.html gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/zap_reports/zap_report-preprod-${{ github.sha }}.html
+          gsutil cp zap_report.html gs://${{ secrets.GCS_BUCKET_NAME }}/zap_reports/zap_report-preprod-${{ github.sha }}.html
 
       # Step 11: Update Helm values for Pre-Prod
       - name: Update Helm values-staging.yaml
