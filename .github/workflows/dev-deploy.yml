@@ -1,12 +1,12 @@
-name: Development Deployment
+name: Pre-Prod Deployment
 
 on:
   push:
     branches:
-      - main   # runs only after PR is merged into main
+      - pre-prod  # triggers when code is pushed/merged to pre-prod
 
 jobs:
-  deploy-dev:
+  deploy-preprod:
     runs-on: ubuntu-latest
 
     steps:
@@ -40,45 +40,51 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           install_components: 'beta'
 
-      # Step 6: Upload artifacts to GCS (Vite output is dist/)
+      # Step 6: Upload build artifacts to GCS (dist folder)
       - name: Upload build artifacts to GCS
         run: |
-          gsutil -m cp -r dist/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
+          if [ -d dist ]; then
+            echo "Uploading dist folder to Pre-Prod GCS..."
+            gsutil -m cp -r dist/* gs://${{ secrets.GCS_BUCKET_NAME }}/pre-prod-${{ github.sha }}/
+          else
+            echo "Build folder not found!"
+            exit 1
+          fi
 
       # Step 7: Build Docker Image
       - name: Build Docker image
         run: |
-          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:preprod-${{ github.sha }}
           docker build -t $IMAGE .
 
       # Step 8: Trivy Scan
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:preprod-${{ github.sha }}
           format: 'table'
           exit-code: '0'
           ignore-unfixed: true
 
-      # Step 9: Push Docker image to GCR
+      # Step 9: Push Docker image
       - name: Push Docker image
         run: |
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
-          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:preprod-${{ github.sha }}
 
-      # Step 10: Update Helm values-dev.yaml in external repo
-      - name: Update Helm values-dev.yaml
+      # Step 10: Update Helm values-preprod.yaml
+      - name: Update Helm values-preprod.yaml
         run: |
           git clone https://x-access-token:${{ secrets.HELM_REPO_GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
           cd helm-nodejs-app
-          sed -i "s#tag:.*#tag: dev-${{ github.sha }}#g" values-dev.yaml
+          sed -i "s#tag:.*#tag: preprod-${{ github.sha }}#g" values-preprod.yaml
 
-      # Step 11: Commit & Push changes
+      # Step 11: Commit & Push Helm changes
       - name: Commit & Push changes
         run: |
           cd helm-nodejs-app
           git config user.name "M Surya Prasad"
           git config user.email "mspr9773@gmail.com"
-          git add values-dev.yaml
-          git commit -m "Update dev image tag to dev-${{ github.sha }}" || echo "No changes to commit"
+          git add values-preprod.yaml
+          git commit -m "Update preprod image tag to preprod-${{ github.sha }}" || echo "No changes to commit"
           git push origin main
