@@ -1,58 +1,85 @@
-name: Development Deployment
+name: Development CI
 
 on:
+  pull_request:
+    branches:
+      - main   # Run checks when raising PR to main
   push:
     branches:
-      - main   # runs only after PR is merged into main
+      - main   # Full pipeline after merge
 
 jobs:
-  deploy-dev:
+  # -------------------------
+  # ✅ PR Validation Job
+  # -------------------------
+  pr-checks:
     runs-on: ubuntu-latest
-
+    if: github.event_name == 'pull_request'
     steps:
-      # Step 1: Checkout repo
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Step 2: Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      # Step 3: Install dependencies & build
       - name: Install dependencies
         run: npm install
 
-      - name: Build app
-        run: npm run build
+      - name: Run ESLint
+        run: npm run lint
 
-      # Step 4: Authenticate to GCP
+      - name: Run Unit Tests
+        run: npm test
+
+  # -------------------------
+  # ✅ Deployment Job (after merge to main)
+  # -------------------------
+  ci-dev:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      # Step 1: CodeQL Scan
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: javascript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+
+      # Step 2: Authenticate to GCP
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # Step 5: Setup gcloud CLI
       - name: Setup gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           install_components: 'beta'
 
-      # Step 6: Upload artifacts to GCS (Vite output is dist/)
-      - name: Upload build artifacts to GCS
-        run: |
-          gsutil -m cp -r dist/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
-
-      # Step 7: Build Docker Image
-      - name: Build Docker image
+      # Step 3: Build & Push Docker Image
+      - name: Build Docker Image
         run: |
           IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
           docker build -t $IMAGE .
 
-      # Step 8: Trivy Scan
-      - name: Run Trivy scan
+      # Step 4: Trivy Scan
+      - name: Run Trivy Scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
           image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
@@ -60,23 +87,17 @@ jobs:
           exit-code: '0'
           ignore-unfixed: true
 
-      # Step 9: Push Docker image to GCR
-      - name: Push Docker image
+      - name: Push Docker Image
         run: |
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
           docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
 
-      # Step 10: Update Helm values-dev.yaml in external repo
+      # Step 5: Update Helm values-dev.yaml
       - name: Update Helm values-dev.yaml
         run: |
           git clone https://x-access-token:${{ secrets.HELM_REPO_GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
           cd helm-nodejs-app
           sed -i "s#tag:.*#tag: dev-${{ github.sha }}#g" values-dev.yaml
-
-      # Step 11: Commit & Push changes
-      - name: Commit & Push changes
-        run: |
-          cd helm-nodejs-app
           git config user.name "M Surya Prasad"
           git config user.email "mspr9773@gmail.com"
           git add values-dev.yaml
