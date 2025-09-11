@@ -11,11 +11,11 @@ on:
 permissions:
   actions: read
   contents: write
-  security-events: write   # ✅ Needed for CodeQL to upload results
+  security-events: write   # Needed for CodeQL upload
 
 jobs:
   # -------------------------
-  # ✅ PR Validation Job
+  # ✅ PR Validation Job (Pre-merge)
   # -------------------------
   pr-checks:
     runs-on: ubuntu-latest
@@ -46,8 +46,19 @@ jobs:
       - name: Run Unit Tests
         run: npm test
 
+      # CodeQL - fail PR if issues found
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          fail-on-error: true   # Stop PR if issues found
+
   # -------------------------
-  # ✅ Deployment Job (after merge to main)
+  # ✅ Deployment Job (Post-merge / Trunk Build)
   # -------------------------
   ci-dev:
     runs-on: ubuntu-latest
@@ -69,22 +80,37 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
-      # Step 1: CodeQL Scan
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript
-
       - name: Install dependencies
         run: npm install
 
       - name: Build project
         run: npm run build --if-present
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+      # -------------------------
+      # Upload artifacts to GCS
+      # -------------------------
+      - name: Upload build artifacts to GCS
+        run: |
+          gsutil -m cp -r build/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
 
-      # Step 2: Authenticate to GCP
+      # -------------------------
+      # Build & Push Docker Image
+      # -------------------------
+      - name: Build Docker Image
+        run: |
+          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          docker build -t $IMAGE .
+
+      - name: Run Trivy Scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: 'table'
+          exit-code: '1'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v1
         with:
@@ -96,29 +122,14 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           install_components: 'beta'
 
-      # Step 3: Build & Push Docker Image
-      - name: Build Docker Image
-        run: |
-          IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
-          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
-          docker build -t $IMAGE .
-
-      # Step 4: Trivy Scan
-      - name: Run Trivy Scan
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          image-ref: ${{ env.IMAGE }}
-          format: 'table'
-          exit-code: '1'   # fail if HIGH/CRITICAL vulnerabilities
-          severity: 'HIGH,CRITICAL'
-          ignore-unfixed: true
-
       - name: Push Docker Image
         run: |
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
           docker push $IMAGE
 
-      # Step 5: Update Helm values-dev.yaml
+      # -------------------------
+      # Update Helm values-dev.yaml
+      # -------------------------
       - name: Update Helm values-dev.yaml
         run: |
           git clone https://x-access-token:${{ secrets.HELM_REPO_GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
