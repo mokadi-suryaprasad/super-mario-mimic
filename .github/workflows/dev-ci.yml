@@ -24,6 +24,14 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Cache Node.js modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
       - name: Install dependencies
         run: npm install
 
@@ -48,17 +56,25 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install dependencies
-        run: npm install
+      - name: Cache Node.js modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
       # Step 1: CodeQL Scan
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
+        uses: github/codeql-action/init@v3
         with:
           languages: javascript
 
+      - name: Install dependencies
+        run: npm install
+
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v2
+        uses: github/codeql-action/analyze@v3
 
       # Step 2: Authenticate to GCP
       - name: Authenticate to GCP
@@ -84,7 +100,8 @@ jobs:
         with:
           image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
           format: 'table'
-          exit-code: '0'
+          exit-code: '1'   # fail if HIGH/CRITICAL vulnerabilities
+          severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
 
       - name: Push Docker Image
@@ -102,4 +119,4 @@ jobs:
           git config user.email "mspr9773@gmail.com"
           git add values-dev.yaml
           git commit -m "Update dev image tag to dev-${{ github.sha }}" || echo "No changes to commit"
-          git push origin main
+          git push origin HEAD:main
