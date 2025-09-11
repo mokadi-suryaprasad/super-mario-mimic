@@ -8,6 +8,11 @@ on:
     branches:
       - main   # Full pipeline after merge
 
+permissions:
+  actions: read
+  contents: write
+  security-events: write   # ✅ Needed for CodeQL to upload results
+
 jobs:
   # -------------------------
   # ✅ PR Validation Job
@@ -73,6 +78,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Build project
+        run: npm run build --if-present
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
@@ -92,13 +100,14 @@ jobs:
       - name: Build Docker Image
         run: |
           IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
           docker build -t $IMAGE .
 
       # Step 4: Trivy Scan
       - name: Run Trivy Scan
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          image-ref: ${{ env.IMAGE }}
           format: 'table'
           exit-code: '1'   # fail if HIGH/CRITICAL vulnerabilities
           severity: 'HIGH,CRITICAL'
@@ -107,7 +116,7 @@ jobs:
       - name: Push Docker Image
         run: |
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
-          docker push ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
+          docker push $IMAGE
 
       # Step 5: Update Helm values-dev.yaml
       - name: Update Helm values-dev.yaml
