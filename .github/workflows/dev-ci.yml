@@ -1,6 +1,12 @@
 name: Development CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      trigger-type:
+        description: 'Manual trigger reason or type'
+        required: false
+        default: 'manual'
   pull_request:
     branches:
       - main   # Run checks when raising PR to main
@@ -16,10 +22,11 @@ permissions:
 jobs:
   # -------------------------
   # ✅ PR Validation Job (Pre-merge)
+  # Also runs on manual trigger
   # -------------------------
   pr-checks:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,14 +62,15 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          fail-on-error: true   # Stop PR if issues found
+          fail-on-error: true
 
   # -------------------------
   # ✅ Deployment Job (Post-merge / Trunk Build)
+  # Also runs on manual trigger
   # -------------------------
   ci-dev:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -86,16 +94,12 @@ jobs:
       - name: Build project
         run: npm run build --if-present
 
-      # -------------------------
       # Upload artifacts to GCS
-      # -------------------------
       - name: Upload build artifacts to GCS
         run: |
           gsutil -m cp -r build/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
 
-      # -------------------------
       # Build & Push Docker Image
-      # -------------------------
       - name: Build Docker Image
         run: |
           IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
@@ -127,9 +131,7 @@ jobs:
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
           docker push $IMAGE
 
-      # -------------------------
       # Update Helm values-dev.yaml
-      # -------------------------
       - name: Update Helm values-dev.yaml
         run: |
           git clone https://x-access-token:${{ secrets.HELM_REPO_GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
