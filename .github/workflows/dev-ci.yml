@@ -9,21 +9,17 @@ on:
         default: 'manual'
   pull_request:
     branches:
-      - main   # Run checks when raising PR to main
+      - main
   push:
     branches:
-      - main   # Full pipeline after merge
+      - main
 
 permissions:
   actions: read
   contents: write
-  security-events: write   # Needed for CodeQL upload
+  security-events: write
 
 jobs:
-  # -------------------------
-  # ✅ PR Validation Job (Pre-merge)
-  # Also runs on manual trigger
-  # -------------------------
   pr-checks:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -53,7 +49,6 @@ jobs:
       - name: Run Unit Tests
         run: npm test
 
-      # CodeQL - fail PR if issues found
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -64,10 +59,6 @@ jobs:
         with:
           fail-on-error: true
 
-  # -------------------------
-  # ✅ Deployment Job (Post-merge / Trunk Build)
-  # Also runs on manual trigger
-  # -------------------------
   ci-dev:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
@@ -94,12 +85,22 @@ jobs:
       - name: Build project
         run: npm run build --if-present
 
-      # Upload artifacts to GCS
-      - name: Upload build artifacts to GCS
+      - name: Debug build folder
         run: |
-          gsutil -m cp -r build/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
+          echo "Checking contents after build:"
+          ls -al
+          echo "Checking build directory:"
+          ls -al build || echo "No build directory found"
 
-      # Build & Push Docker Image
+      - name: Upload build artifacts to GCS (if exists)
+        run: |
+          if [ -d "build" ]; then
+            echo "Uploading build folder to GCS..."
+            gsutil -m cp -r build/* gs://${{ secrets.GCS_BUCKET_NAME }}/nodejs-app/${{ github.sha }}/
+          else
+            echo "No build directory to upload. Skipping."
+          fi
+
       - name: Build Docker Image
         run: |
           IMAGE=${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/microservicequiz/nodejs-app:dev-${{ github.sha }}
@@ -131,7 +132,6 @@ jobs:
           gcloud auth configure-docker ${{ secrets.GCP_GCR_REGION }}-docker.pkg.dev --quiet
           docker push $IMAGE
 
-      # Update Helm values-dev.yaml
       - name: Update Helm values-dev.yaml
         run: |
           git clone https://x-access-token:${{ secrets.HELM_REPO_GITHUB_TOKEN }}@github.com/mokadi-suryaprasad/helm-nodejs-app.git
